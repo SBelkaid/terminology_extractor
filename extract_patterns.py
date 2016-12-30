@@ -15,6 +15,8 @@ import xml.etree.cElementTree as etree
 import sys
 import sqlite3
 import argparse
+import json
+
 
 
 def get_all_ngrans(db_con, this_len):
@@ -24,14 +26,16 @@ def get_all_ngrans(db_con, this_len):
     my_cursor = db_con.cursor()
     for hit in my_cursor.execute('select * from '+table_name):
         #hit -> (21809, u'g.\tfruit\t,', u'g.\tfruit\t,', u'FW\tNN\t,', 1)
-        json_obj = {'tokens': hit[1].lower().split('\t'),
+        json_obj = {'doc_id': hit[-1],
+                    'tokens': hit[1].lower().split('\t'),
                     'lemmas': hit[2].lower().split('\t'),
                     'pos': hit[3].lower().split('\t'),
+                    't_id': hit[5].lower().split('\t')
                     }
         yield json_obj
 
         
-def get_hits(db_con, this_len,set_of_patterns):
+def get_hits(db_con, this_len, set_of_patterns):
     selected = []
     for json_obj in get_all_ngrans(db_con, this_len):
         for pattern in set_of_patterns:
@@ -63,37 +67,50 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     
-    
-    
     agglomerated = defaultdict(int)
+    agglomerated_2 = defaultdict(int)
+    docs_agglomerated = defaultdict(list)
     db_con = sqlite3.connect(args.database_name)
     
+
     patterns = {}
     my_obj = etree.parse(args.patterns_file)
     for pattern_node in my_obj.findall('pattern'):
         this_len = pattern_node.get('len')
-        ignore_this =(pattern_node.get('ignore',"0") == "1")
+        ignore_this = (pattern_node.get('ignore',"0") == "1")
         if not ignore_this:
             if this_len not in patterns:
                 patterns[this_len] = []
             this_pattern = []
+
             for p in pattern_node:
                 piece_of_pattern = (p.get('key'), int(p.get('position')), p.get('values').split(' '))
                 this_pattern.append(piece_of_pattern)
             patterns[this_len].append(this_pattern)
-            
+
     for this_str_len, these_patterns in patterns.items():
         for json_obj in get_hits(db_con, int(this_str_len), these_patterns):
-            agglomerated[' '.join(json_obj['tokens'])] += 1
+            tokens = ' '.join(json_obj['tokens']).encode('utf-8')
+            lemmas = ' '.join(json_obj['lemmas']).encode('utf-8')
+            pos = ' '.join(json_obj['pos']).encode('utf-8')
+            t_id = ' '.join(json_obj['t_id']).encode('utf-8')
+            doc_id = json_obj['doc_id']
+#            print doc_id
+#            zipped = zip(tokens.split(' '), t_id.split(' '))
+            agglomerated_2[lemmas] += 1
+            docs_agglomerated[doc_id].append((t_id, lemmas))
+#            agglomerated[lemmas] += 1
 
 
     ######################
     # PRINTING THE RESULTS
     #######################
-    for value, count in sorted(agglomerated.items(),key=lambda t: -t[1]):
-        print count, value.encode('utf-8')
+#    for value, count in sorted(agglomerated_2.items(),key=lambda t: t[1], reverse=True):
+#        print count, value
     
+    print json.dumps(docs_agglomerated)
     sys.exit(0)
+
     
         
         
