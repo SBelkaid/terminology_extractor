@@ -19,7 +19,8 @@ import os
 import argparse
 import sqlite3
 
-from libs.KafNafParserPy import KafNafParser
+from KafNafParserPy import KafNafParser
+from lxml.etree import XMLSyntaxError
 
 logger = logging.getLogger(__file__)   
 
@@ -63,21 +64,28 @@ def check_already_existing(db_con, naf_filename):
   
 def extract_data_from_file(db_con, naf_filename,document_id):
     global MAX_NGRAM
-    naf_obj = KafNafParser(naf_filename)
+    try:
+        naf_obj = KafNafParser(naf_filename)
+    except XMLSyntaxError, e:
+        logger.info('The document is empty, MOVING ON and returning None')
+        return None
     lemma_pos_for_tokenid = {}
     for term in naf_obj.get_terms():
         for tokid in term.get_span().get_span_ids():
             lemma_pos_for_tokenid[tokid] = (term.get_lemma(),term.get_morphofeat().split(' ')[0])
         
     data_token = []     # List of (token,lemma,pos,sentenceid)
-    for token in naf_obj.get_tokens():
-        value = token.get_text()
-        tokid = token.get_id()
-        if tokid in lemma_pos_for_tokenid:
-            lemma, pos = lemma_pos_for_tokenid[tokid]
-            data_token.append((token.get_text(),lemma,pos,token.get_sent()))
-    del lemma_pos_for_tokenid
-    del naf_obj
+    try:
+        for token in naf_obj.get_tokens():
+            value = token.get_text()
+            tokid = token.get_id()
+            if tokid in lemma_pos_for_tokenid:
+                lemma, pos = lemma_pos_for_tokenid[tokid]
+                data_token.append((token.get_text(),lemma,pos,token.get_sent(),tokid))
+        del lemma_pos_for_tokenid
+        del naf_obj
+    except TypeError, e:
+        return
     
     #Generating stuff
     cross_sentences = False
@@ -93,14 +101,23 @@ def extract_data_from_file(db_con, naf_filename,document_id):
                     token_ngram = []
                     lemma_ngram = []
                     pos_ngram = []
+                    tid_ngram = []
                     for this_token in data_token[start:end]:
+#                        print this_token[4]
                         token_ngram.append(this_token[0])
                         lemma_ngram.append(this_token[1]) 
                         pos_ngram.append(this_token[2])
+                        tid_ngram.append(this_token[4])
                         
+
                     #CREATE THE STUFF
                     table_name = 'tbl%dgram' % ngramlen
-                    this_cursor.execute("insert into "+table_name+" values (NULL,?,?,?,?)" , (SEPARATOR.join(token_ngram), SEPARATOR.join(lemma_ngram), SEPARATOR.join(pos_ngram),document_id))
+                    this_cursor.execute("insert into "+table_name+" values (NULL,?,?,?,?,?,?)" , (SEPARATOR.join(token_ngram),
+                                                                            SEPARATOR.join(lemma_ngram),
+                                                                             SEPARATOR.join(pos_ngram),
+                                                                                document_id, 
+                                                                                SEPARATOR.join(tid_ngram), 
+                                                                                    naf_filename))
                     created += 1
                     if created % 10000 == 0:
                         logger.info('Extracted %d ngrams for %s' % (created, naf_filename))
@@ -119,16 +136,17 @@ def index_file(db_con,naf_filename):
     if not already_existing:
         #Create a new document
         if True:
-            my_query = 'INSERT INTO documents VALUES (NULL,"%s",DateTime("now"));' % checksum
-            this_cursor = db_con.cursor()
-            this_cursor.execute(my_query)
-            document_id = this_cursor.lastrowid
-            created = extract_data_from_file(db_con, naf_filename,document_id)
-            total += created
-            logger.info('Ngrams for %s extracted. Total: %d' % (naf_filename,created))
-        #except Exception as e:
-        #    
-        #    logger.info('Something went wrong with document %s and it has not been included in the index %s' % (naf_filename,str(e)))
+            try:
+                my_query = 'INSERT INTO documents VALUES (NULL,"%s",DateTime("now"));' % checksum
+                this_cursor = db_con.cursor()
+                this_cursor.execute(my_query)
+                document_id = this_cursor.lastrowid
+                created = extract_data_from_file(db_con, naf_filename,document_id)
+                total += created
+                logger.info('Ngrams for %s extracted. Total: %d' % (naf_filename,created))
+            except TypeError:
+                logger.info('extract_data_from_file returned None from %s' % naf_filename)            
+#            logger.info('Something went wrong with document %s and it has not been included in the index %s' % (naf_filename,str(e)))
     db_con.commit()
     return total
         
@@ -153,6 +171,8 @@ def connect_to_db(database_name):
                                                       lemma VARCHAR NOT NULL,
                                                       pos VARCHAR NOT NULL,
                                                       document INT NOT NULL,
+                                                      token_id VARCHAR NOT NULL,
+                                                      file_name VARCHAR NOT NULL,
                                                       FOREIGN KEY(document) REFERENCES documents(id));''' % ngram
             cursor.execute(create_table)
         db_con.commit()
