@@ -24,7 +24,7 @@ git clone https://github.com/cltl/KafNafParserPy.git
 #########################
 # 1) Treetagger_plain2naf
 #########################
-git clone https://github.com/rubenIzquierdo/treetagger_plain2naf
+git clone https://github.com/SBelkaid/treetagger_plain2naf.git
 cd treetagger_plain2naf
 . install_dependencies.sh
 cd ..	# back to libs
